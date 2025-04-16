@@ -14,7 +14,7 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
-use crate::config::MAX_APP_NUM;
+use crate::config::{MAX_APP_NUM, MAX_SYSCALL_NUM};
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
 use lazy_static::*;
@@ -54,6 +54,7 @@ lazy_static! {
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
+            syscall_times: [0; MAX_SYSCALL_NUM],
         }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
@@ -133,6 +134,38 @@ impl TaskManager {
             // go back to user mode
         } else {
             panic!("All applications completed!");
+        }
+    }
+
+    /// 获取当前任务的系统调用次数
+    pub fn get_current_task_syscall_times(&self, syscall_id: usize) -> u32 {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        if syscall_id >= MAX_SYSCALL_NUM {
+            return 0;
+        }
+        inner.tasks[current].syscall_times[syscall_id]
+    }
+
+    /// 增加当前任务的系统调用次数
+    pub fn increment_current_task_syscall_times(&self, syscall_id: usize) {
+        if syscall_id >= MAX_SYSCALL_NUM {
+            return;
+        }
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_times[syscall_id] += 1;
+    }
+
+    /// 读取指定地址的一个字节
+    pub fn read_byte_from_current_task(&self, ptr: *const u8) -> u8 {
+        unsafe { *ptr }
+    }
+
+    /// 写入一个字节到指定地址
+    pub fn write_byte_to_current_task(&self, ptr: *mut u8, value: u8) {
+        unsafe {
+            *ptr = value;
         }
     }
 }
