@@ -6,6 +6,3 @@ rustflags = [
     "-Clink-arg=-Tsrc/linker.ld", "-Cforce-frame-pointers=yes"
 ]
 
-[source.crates-io]
-replace-with = 'tsinghua'
-
