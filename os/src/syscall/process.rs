@@ -11,6 +11,7 @@ pub struct TimeVal {
     pub usec: usize,
 }
 
+
 /// task exits and submit an exit code
 pub fn sys_exit(exit_code: i32) -> ! {
     trace!("[kernel] Application exited with code {}", exit_code);
