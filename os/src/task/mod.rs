@@ -202,3 +202,13 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
 }
+
+/// Get the current 'Running' task
+pub fn current_task() -> &'static mut TaskControlBlock {
+    let current = TASK_MANAGER.inner.exclusive_access().current_task;
+    unsafe {
+        let mut inner = TASK_MANAGER.inner.exclusive_access();
+        let task = &mut inner.tasks[current] as *mut TaskControlBlock;
+        &mut *task
+    }
+}

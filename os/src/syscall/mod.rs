@@ -16,6 +16,8 @@ const SYSCALL_EXIT: usize = 93;
 const SYSCALL_YIELD: usize = 124;
 /// gettime syscall
 const SYSCALL_GET_TIME: usize = 169;
+/// sleep syscall
+const SYSCALL_SLEEP: usize = 162;
 /// sbrk syscall
 const SYSCALL_SBRK: usize = 214;
 /// munmap syscall
@@ -30,9 +32,13 @@ mod process;
 
 use fs::*;
 use process::*;
+use crate::task::current_task;
 
 /// handle syscall exception with `syscall_id` and other arguments
 pub fn syscall(syscall_id: usize, args: [usize; 3]) -> isize {
+    // 增加系统调用计数
+    current_task().syscall_times[syscall_id] += 1;
+    
     match syscall_id {
         SYSCALL_WRITE => sys_write(args[0], args[1] as *const u8, args[2]),
         SYSCALL_EXIT => sys_exit(args[0] as i32),
@@ -42,6 +48,10 @@ pub fn syscall(syscall_id: usize, args: [usize; 3]) -> isize {
         SYSCALL_MMAP => sys_mmap(args[0], args[1], args[2]),
         SYSCALL_MUNMAP => sys_munmap(args[0], args[1]),
         SYSCALL_SBRK => sys_sbrk(args[0] as i32),
-        _ => panic!("Unsupported syscall_id: {}", syscall_id),
+        SYSCALL_SLEEP => sys_sleep(args[0]),
+        _ => {
+            error!("Unsupported syscall_id: {}", syscall_id);
+            -1
+        }
     }
 }

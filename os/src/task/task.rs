@@ -5,6 +5,8 @@ use crate::mm::{
     kernel_stack_position, MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE,
 };
 use crate::trap::{trap_handler, TrapContext};
+use alloc::vec::Vec;
+use alloc::vec;
 
 /// The task control block (TCB) of a task.
 pub struct TaskControlBlock {
@@ -28,6 +30,9 @@ pub struct TaskControlBlock {
 
     /// Program break
     pub program_brk: usize,
+    
+    /// System call trace counter
+    pub syscall_times: Vec<usize>,
 }
 
 impl TaskControlBlock {
@@ -63,6 +68,7 @@ impl TaskControlBlock {
             base_size: user_sp,
             heap_bottom: user_sp,
             program_brk: user_sp,
+            syscall_times: vec![0; 500], // 预分配足够的空间用于跟踪系统调用
         };
         // prepare TrapContext in user space
         let trap_cx = task_control_block.get_trap_cx();

@@ -262,6 +262,145 @@ impl MemorySet {
             false
         }
     }
+
+    /// 移除指定范围内的映射页面并更新 MapArea 列表
+    pub fn remove_area_with_start_vpn(&mut self, start_va: VirtAddr, end_va: VirtAddr) -> bool {
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil(); // exclusive end
+
+        if start_vpn >= end_vpn {
+            // Nothing to unmap
+            return true;
+        }
+
+        // First, unmap pages from the page table.
+        // According to munmap spec, attempting to unmap pages that are not mapped
+        // is not an error. We don't need to check self.translate here.
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            // Unmap regardless of whether it was previously mapped or tracked in areas.
+            // Frame deallocation happens when the corresponding FrameTracker is dropped.
+            self.page_table.unmap(vpn);
+        }
+
+        // Now, modify the self.areas vector
+        let mut new_areas = Vec::new();
+        // Use drain to take ownership and rebuild the areas list
+        for mut area in self.areas.drain(..) {
+            let area_start = area.vpn_range.get_start();
+            let area_end = area.vpn_range.get_end(); // exclusive end
+
+            // Check for overlap between the area and the unmap range
+            let overlap_start = core::cmp::max(start_vpn, area_start);
+            let overlap_end = core::cmp::min(end_vpn, area_end); // exclusive end
+
+            if overlap_start < overlap_end { // There is an overlap
+                // Case 1: Area is completely removed (unmap range covers the whole area)
+                if start_vpn <= area_start && end_vpn >= area_end {
+                    // Area is fully contained within the unmap range.
+                    // Drop the area; its data_frames (and thus FrameTrackers) will be dropped.
+                    continue; // Don't add it back to new_areas
+                }
+
+                // Case 2: Unmap range splits the area in the middle
+                if start_vpn > area_start && end_vpn < area_end {
+                    // Create the first part (before unmap)
+                    let mut area1 = MapArea {
+                        vpn_range: VPNRange::new(area_start, start_vpn),
+                        data_frames: BTreeMap::new(), // Initialize empty
+                        map_type: area.map_type,
+                        map_perm: area.map_perm,
+                    };
+                    // Move relevant frames from the original area
+                    if area.map_type == MapType::Framed {
+                        for vpn in VPNRange::new(area_start, start_vpn) {
+                            if let Some(frame) = area.data_frames.remove(&vpn) {
+                                area1.data_frames.insert(vpn, frame);
+                            }
+                        }
+                    }
+
+                    // Create the second part (after unmap)
+                    let mut area2 = MapArea {
+                        vpn_range: VPNRange::new(end_vpn, area_end),
+                        data_frames: BTreeMap::new(), // Initialize empty
+                        map_type: area.map_type,
+                        map_perm: area.map_perm,
+                    };
+                    // Move relevant frames from the original area
+                     if area.map_type == MapType::Framed {
+                        for vpn in VPNRange::new(end_vpn, area_end) {
+                            if let Some(frame) = area.data_frames.remove(&vpn) {
+                                area2.data_frames.insert(vpn, frame);
+                            }
+                        }
+                    }
+
+                    // Create the two new areas if they are not empty
+                    if area1.vpn_range.get_start() != area1.vpn_range.get_end() { new_areas.push(area1); }
+                    if area2.vpn_range.get_start() != area2.vpn_range.get_end() { new_areas.push(area2); }
+                    // The original area and its remaining frames (in the unmapped range) are dropped here.
+                    continue; // Go to the next original area
+                }
+
+                // Case 3: Unmap range overlaps the beginning of the area
+                if start_vpn <= area_start && end_vpn < area_end {
+                    // Shrink the area from the start
+                    let mut new_area = MapArea {
+                        vpn_range: VPNRange::new(end_vpn, area_end),
+                        data_frames: BTreeMap::new(),
+                        map_type: area.map_type,
+                        map_perm: area.map_perm,
+                    };
+                    // Move remaining frames
+                    if area.map_type == MapType::Framed {
+                        for vpn in VPNRange::new(end_vpn, area_end) {
+                            if let Some(frame) = area.data_frames.remove(&vpn) {
+                                new_area.data_frames.insert(vpn, frame);
+                            }
+                        }
+                    }
+                    if !new_area.vpn_range.is_empty() { new_areas.push(new_area); }
+                    continue;
+                }
+
+                // Case 4: Unmap range overlaps the end of the area
+                if start_vpn > area_start && end_vpn >= area_end {
+                     // Shrink the area from the end
+                    let mut new_area = MapArea {
+                        vpn_range: VPNRange::new(area_start, start_vpn),
+                        data_frames: BTreeMap::new(),
+                        map_type: area.map_type,
+                        map_perm: area.map_perm,
+                    };
+                     // Move remaining frames
+                    if area.map_type == MapType::Framed {
+                        for vpn in VPNRange::new(area_start, start_vpn) {
+                            if let Some(frame) = area.data_frames.remove(&vpn) {
+                                new_area.data_frames.insert(vpn, frame);
+                            }
+                        }
+                    }
+                    if !new_area.vpn_range.is_empty() { new_areas.push(new_area); }
+                    continue;
+                }
+
+                // Should not reach here if logic is correct, but handle defensively
+                 warn!("Unhandled overlap case in remove_area_with_start_vpn: area [{:?}, {:?}), unmap [{:?}, {:?})", area_start, area_end, start_vpn, end_vpn);
+                 // Keep the original area for safety? Or discard? Discarding seems more consistent with munmap.
+                 continue;
+
+
+            } else {
+                // No overlap, keep the area as is
+                new_areas.push(area);
+            }
+        }
+
+        self.areas = new_areas; // Replace with the potentially modified list
+
+        // munmap returns 0 on success, which we represent as true.
+        true
+    }
 }
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {

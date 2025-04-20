@@ -70,6 +70,10 @@ impl PageTableEntry {
     pub fn executable(&self) -> bool {
         (self.flags() & PTEFlags::X) != PTEFlags::empty()
     }
+    /// The page pointered by page table entry is accessible by user?
+    pub fn user_accessible(&self) -> bool {
+        (self.flags() & PTEFlags::U) != PTEFlags::empty()
+    }
 }
 
 /// page table structure
@@ -143,13 +147,28 @@ impl PageTable {
     /// remove the map between virtual page number and physical page number
     #[allow(unused)]
     pub fn unmap(&mut self, vpn: VirtPageNum) {
-        let pte = self.find_pte(vpn).unwrap();
-        assert!(pte.is_valid(), "vpn {:?} is invalid before unmapping", vpn);
-        *pte = PageTableEntry::empty();
+        // Find the PTE, but don't create intermediate page tables if they don't exist.
+        if let Some(pte) = self.find_pte(vpn) {
+            // Only proceed if the PTE is currently valid.
+            if pte.is_valid() {
+                *pte = PageTableEntry::empty();
+            } else {
+                // If PTE is found but not valid, do nothing. It's already effectively unmapped.
+                // Or maybe warn? warn!("Attempted to unmap an already invalid VPN: {:?}", vpn);
+            }
+        } else {
+            // If PTE cannot be found (implies intermediate tables missing), it's also unmapped.
+            // warn!("Attempted to unmap a VPN whose page table entries do not exist: {:?}", vpn);
+        }
+        // Note: Frame deallocation logic is handled by FrameTracker's Drop trait,
+        // which happens when the corresponding MapArea is dropped or modified
+        // in MemorySet::remove_area_with_start_vpn.
     }
     /// get the page table entry from the virtual page number
     pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
-        self.find_pte(vpn).map(|pte| *pte)
+        self.find_pte(vpn)
+            .filter(|pte| pte.is_valid())
+            .map(|pte| *pte)
     }
     /// get the token from the page table
     pub fn token(&self) -> usize {
